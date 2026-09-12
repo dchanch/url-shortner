@@ -11,9 +11,10 @@ A production-style URL shortener prototype built in Python with FastAPI, SQLite 
 - Strict HTTP/HTTPS input validation
 - Request IDs and structured request timing logs
 - Configurable in-memory rate limiting for link creation
-- Agentic orchestration model with dependency graphs and approval gates
-- Tests for API behavior and orchestration logic
-- Architecture, setup, and scenario documentation
+- Agentic orchestration engine with dependency graphs, parallel synchronization, bounded retry, fallback, rollback, safe-stop/resume, policy guardrails, re-planning, and reliability metrics
+- Three runnable scenarios (greenfield, brownfield, ambiguous) wired to the real service
+- Tests for API behavior, orchestration primitives, and scenario execution
+- Architecture, setup, scenario, and final engineering summary documentation
 
 ## Quick start
 
@@ -60,6 +61,9 @@ A production-style URL shortener prototype built in Python with FastAPI, SQLite 
 
 ## API summary
 
+The full OpenAPI schema is exported to [docs/openapi.json](docs/openapi.json) and is
+also available live at `/docs` (Swagger UI) and `/openapi.json` when the app is running.
+
 - POST /api/links
   - Body: {"long_url": "https://example.com", "custom_slug": "demo"}
   - Returns the short code, short URL, created timestamp, and initial click count
@@ -82,9 +86,11 @@ When `API_KEY` is configured, POST /api/links also requires the value in the `X-
 The prototype is divided into a few simple modules:
 
 - main.py: FastAPI app and route definitions
-- app/service.py: Business logic for shortening, redirecting, and analytics
+- app/services/url_shortener_service.py: Business logic for shortening, redirecting, and analytics
+- app/repositories/links.py: SQLite persistence for links and click events
 - app/db.py: SQLite schema and connection management
-- app/orchestration.py: Dependency-driven workflow runner for agentic execution
+- app/orchestration.py: Governed, resumable workflow graph executor for agentic execution
+- app/scenarios.py: Runnable greenfield/brownfield/ambiguous scenario builders
 - app/config.py: Environment and system configuration
 
 The API validates URL schemes at the request boundary, while the service layer retains the same
@@ -93,55 +99,49 @@ details out of routes and business logic.
 
 ## Agentic orchestration model
 
-The orchestration layer models SDLC stages as nodes in a dependency graph.
-Each stage can declare dependencies, retries, and approval requirements.
-The runner executes only ready stages, ensures ordered progression, records audit logs,
-retries failed operations, and stops for approval-gated high-impact actions.
-This is a lightweight version of an agentic execution model that demonstrates:
+The orchestration layer (`app/orchestration.py`) models SDLC stages as nodes in a
+dependency graph and executes them with governance controls, not just ordering:
 
-- dependency sequencing
-- cross-stage traceability
-- bounded retry behavior
-- approval gates
-- re-planning readiness via explicit task graph structure
+- explicit dependency graph with entry/exit gates
+- parallel execution of independent ready stages with a synchronization barrier
+- cross-stage context propagation and decision lineage (`graph.context`, `provide_context`)
+- human approval checkpoints that safe-stop and resume rather than crash
+- bounded retries, fallback handlers, and rollback of completed stages on unrecoverable failure
+- pluggable policy guardrails (critical stages must be approval-gated by default)
+- an audit-grade log of every state transition
+- reliability metrics: success rate, retry/rollback counts, MTTR, end-to-end latency
+- dynamic re-planning that adds/changes stages mid-flight without losing completed work
 
-## Three scenarios
+See [docs/architecture.md](docs/architecture.md) for the full design and
+[docs/scenarios.md](docs/scenarios.md) for how each guarantee is exercised.
 
-### 1) Greenfield scenario
+## Three scenarios (runnable)
 
-A new URL shortener is created from scratch. The workflow stages are:
+`app/scenarios.py` builds real `WorkflowExecutionGraph` instances wired to the actual
+`UrlShortenerService` for all three required scenarios. Full walkthroughs with
+decomposition, orchestration, and validation detail are in
+[docs/scenarios.md](docs/scenarios.md); executable proof is in
+[tests/test_scenarios.py](tests/test_scenarios.py).
 
-- requirements
-- design
-- implementation
-- validation
-- release readiness
-
-This is represented in the orchestration graph and can be executed by the workflow runner.
-
-### 2) Brownfield scenario
-
-An existing shortener is enhanced to add analytics, retry protection, or a new API surface.
-The existing graph can be extended by appending or modifying nodes while keeping dependencies intact.
-
-### 3) Ambiguous scenario
-
-If the product requirement is underspecified—for example, whether custom slugs must be unique,
-where the analytics retention window should live, or whether redirects are 301 vs 307—the workflow
-supports a controlled execution model where requirements must be clarified before the high-impact
-release stage can pass.
+- **Greenfield** — `build_greenfield_workflow()`: requirements → design →
+  implementation → validation → release (approval-gated).
+- **Brownfield** — `build_brownfield_workflow()`: adds link expiration to the
+  existing system; demonstrates a retry-then-succeed migration and, with
+  `force_regression_failure=True`, a rollback of the completed implementation stage.
+- **Ambiguous** — `build_ambiguous_workflow()`: blocks (safe-stop) at the design
+  stage until custom-slug case sensitivity and analytics retention window are
+  clarified via `graph.provide_context(...)`, then resumes.
 
 ## Testing approach
 
 The project uses pytest with FastAPI's TestClient to validate the service behavior end-to-end.
 The tests cover:
 
-- link creation
-- redirect behavior
-- analytics updates
-- custom slug validation
-- workflow dependency ordering
-- approval gate logic
+- link creation, redirect behavior, and analytics updates
+- custom slug validation and rate limiting
+- workflow dependency ordering, parallel-batch execution, and reliability metrics
+- approval gates (safe-stop and resume), entry-gate blocking, fallback, rollback, and re-planning
+- all three runnable scenarios end-to-end against the real service (`tests/test_scenarios.py`)
 
 Run:
 
@@ -163,8 +163,9 @@ pytest -q
 ## Deliverables summary
 
 - Working prototype
-- Architecture overview
+- [Architecture overview](docs/architecture.md)
+- [Scenario walkthroughs](docs/scenarios.md) (greenfield, brownfield, ambiguous)
+- [Final engineering summary](docs/engineering-summary.md) (rationale, risks, assumptions, limitations)
 - Setup instructions
 - Testing approach
 - Reliability and governance model
-- Scenario walkthroughs

@@ -95,12 +95,153 @@ def test_workflow_requires_approval_for_high_impact_task():
     workflow = WorkflowExecutionGraph(
         [
             WorkflowStep("requirements", description="Capture requirements"),
-            WorkflowStep("release", depends_on=["requirements"], approval_required=True, description="Release gate"),
+            WorkflowStep(
+                "release",
+                depends_on=["requirements"],
+                approval_required=True,
+                critical=True,
+                description="Release gate",
+            ),
         ]
     )
 
-    try:
-        workflow.run(human_approval=False)
-        assert False, "Expected approval to be required"
-    except RuntimeError as exc:
-        assert "Approval required" in str(exc)
+    result = workflow.run(human_approval=False)
+    assert result["status"] == "awaiting_approval"
+    assert result["pending_steps"] == ["release"]
+    assert result["completed_steps"] == ["requirements"]
+
+    resumed = workflow.run(human_approval=True)
+    assert resumed["status"] == "completed"
+    assert resumed["completed_steps"] == ["requirements", "release"]
+
+
+def test_workflow_supports_fallback_when_retries_are_exhausted():
+    def flaky_runner(name, step, context):
+        if name == "implementation":
+            raise RuntimeError("simulated failure")
+        return {"stage": name, "status": "ok"}
+
+    def implementation_fallback(name, step, context):
+        return {"stage": name, "status": "degraded", "used_fallback": True}
+
+    workflow = WorkflowExecutionGraph(
+        [
+            WorkflowStep("requirements", description="Capture requirements"),
+            WorkflowStep(
+                "implementation",
+                depends_on=["requirements"],
+                retries=1,
+                fallback=implementation_fallback,
+                description="Implement the build",
+            ),
+        ]
+    )
+
+    result = workflow.run(task_runner=flaky_runner)
+    assert result["status"] == "completed"
+    assert workflow.steps["implementation"].used_fallback is True
+    assert result["metrics"]["retry_count"] == 1
+
+
+def test_workflow_rolls_back_completed_steps_on_unrecoverable_failure():
+    rolled_back = []
+
+    def runner(name, step, context):
+        if name == "validation":
+            raise RuntimeError("validation failed with no fallback")
+        return {"stage": name}
+
+    def rollback(name, step, context):
+        rolled_back.append(name)
+
+    workflow = WorkflowExecutionGraph(
+        [
+            WorkflowStep("requirements", description="Capture requirements"),
+            WorkflowStep(
+                "implementation",
+                depends_on=["requirements"],
+                rollback=rollback,
+                description="Implement the build",
+            ),
+            WorkflowStep(
+                "validation",
+                depends_on=["implementation"],
+                retries=0,
+                description="Validate the output",
+            ),
+        ]
+    )
+
+    result = workflow.run(task_runner=runner)
+    assert result["status"] == "rolled_back"
+    assert rolled_back == ["implementation"]
+    assert workflow.steps["implementation"].status == "rolled_back"
+    assert result["metrics"]["rollback_count"] == 1
+
+
+def test_workflow_entry_gate_blocks_until_clarification_provided():
+    def gate(name, step, context):
+        return None if "answer" in context else "clarification needed"
+
+    workflow = WorkflowExecutionGraph(
+        [
+            WorkflowStep("requirements", description="Capture ambiguous requirement"),
+            WorkflowStep(
+                "design",
+                depends_on=["requirements"],
+                entry_gate=gate,
+                description="Resolve ambiguity",
+            ),
+        ]
+    )
+
+    blocked = workflow.run()
+    assert blocked["status"] == "blocked"
+    assert blocked["pending_steps"] == ["design"]
+
+    workflow.provide_context("answer", "case-sensitive")
+    resumed = workflow.run()
+    assert resumed["status"] == "completed"
+
+
+def test_workflow_replan_adds_steps_while_preserving_completed_lineage():
+    workflow = WorkflowExecutionGraph(
+        [
+            WorkflowStep("requirements", description="Capture requirements"),
+            WorkflowStep("design", depends_on=["requirements"], description="Design"),
+        ]
+    )
+    workflow.run()
+    assert workflow.context["requirements"]["stage"] == "requirements"
+
+    workflow.replan(
+        [WorkflowStep("retention_policy", depends_on=["design"], description="Add retention job")],
+        reason="analytics retention window was clarified after design completed",
+    )
+    result = workflow.run()
+    assert result["status"] == "completed"
+    assert "retention_policy" in result["completed_steps"]
+    assert workflow.context["requirements"]["stage"] == "requirements"
+
+
+def test_default_policy_guardrail_blocks_critical_steps_without_approval():
+    workflow = WorkflowExecutionGraph(
+        [WorkflowStep("release", critical=True, approval_required=False, description="Release")]
+    )
+    result = workflow.run()
+    assert result["status"] == "blocked"
+    assert result["pending_steps"] == ["release"]
+
+
+def test_workflow_reports_reliability_metrics():
+    workflow = WorkflowExecutionGraph(
+        [
+            WorkflowStep("requirements", description="Capture requirements"),
+            WorkflowStep("design", depends_on=["requirements"], description="Design"),
+        ]
+    )
+    result = workflow.run()
+    metrics = result["metrics"]
+    assert metrics["total_steps"] == 2
+    assert metrics["success_rate"] == 1.0
+    assert metrics["end_to_end_latency_ms"] is not None
