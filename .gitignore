@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 data/*.db
 instructions/
+instructions.txt
+.DS_Store
