@@ -12,13 +12,13 @@ APIs, analytics, and reliability features."
 
 **Decomposition** (`build_greenfield_workflow`):
 
-| Stage | Depends on | Notes |
-|---|---|---|
-| `requirements` | — | Normalize the ask: shorten URLs, redirect with click tracking, expose analytics |
-| `design` | requirements | REST surface, SQLite schema, rate limiting, request tracing |
-| `implementation` | design | Calls `UrlShortenerService.create_link` for real |
-| `validation` | implementation | Re-reads the link, redirects it, asserts the click counter incremented |
-| `release` | validation | `approval_required=True`, `critical=True` — human sign-off gate |
+| Stage            | Depends on     | Notes                                                                           |
+| ---------------- | -------------- | ------------------------------------------------------------------------------- |
+| `requirements`   | —              | Normalize the ask: shorten URLs, redirect with click tracking, expose analytics |
+| `design`         | requirements   | REST surface, SQLite schema, rate limiting, request tracing                     |
+| `implementation` | design         | Calls `UrlShortenerService.create_link` for real                                |
+| `validation`     | implementation | Re-reads the link, redirects it, asserts the click counter incremented          |
+| `release`        | validation     | `approval_required=True`, `critical=True` — human sign-off gate                 |
 
 **Orchestration:** stages run strictly in sequence (each depends on the previous),
 demonstrating the simplest legal path through the dependency graph. `release` is
@@ -41,6 +41,7 @@ touched by adding link expiration: `app/api/routes.py`, `app/services/url_shorte
 **Decomposition:** `impact_analysis → design → implementation → regression_tests → release`.
 
 **Orchestration and failure handling:**
+
 - `implementation` simulates a first-attempt migration timeout, then succeeds on
   retry — exercising the bounded-retry control (`retries=2`) with a real
   attempt counter surfaced in `graph.steps["implementation"].attempts` and in
@@ -81,7 +82,7 @@ graph.run(human_approval=True, task_runner=task_runner)  # now completes
 ```
 
 This is logged in `graph.audit_log` as a `context_updated` entry with the reason,
-giving a durable decision-lineage record of *why* the ambiguity was resolved the way
+giving a durable decision-lineage record of _why_ the ambiguity was resolved the way
 it was — distinct from a normal approval gate.
 
 **Re-planning:** if, after clarification, a new dependent obligation appears (e.g. a

@@ -33,7 +33,6 @@ A production-style URL shortener prototype built in Python with FastAPI, SQLite 
    ```
 
    Optional environment settings:
-
    - `BASE_URL`: public base URL used in generated links
    - `API_KEY`: optional API key required on link creation requests
    - `RATE_LIMIT_REQUESTS`: link-creation requests allowed per client in the window (default: `60`)

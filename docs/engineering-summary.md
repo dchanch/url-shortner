@@ -43,7 +43,7 @@ data, so validation stages can actually fail.
   production version would persist `steps`/`context`/`audit_log` to durable storage
   keyed by a workflow-run id.
 - **Rollback is best-effort and application-defined.** The engine guarantees
-  rollback handlers are *invoked* in reverse order with the shared context, but it
+  rollback handlers are _invoked_ in reverse order with the shared context, but it
   cannot guarantee arbitrary side effects are truly undoable — that correctness is
   the responsibility of each `rollback` handler the caller supplies. Validated via
   `test_workflow_rolls_back_completed_steps_on_unrecoverable_failure` and
